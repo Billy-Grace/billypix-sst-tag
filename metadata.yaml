@@ -1,0 +1,5 @@
+homepage: "https://www.billygrace.com"
+documentation: "https://help.billygrace.com/en/"
+versions:
+  - sha: TODO_FILL
+    changeNotes: Initial release
