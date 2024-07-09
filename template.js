@@ -59,6 +59,18 @@ if (data.isDebug){
   log('getCookieValues: ', getCookieValues(USER_ID_COOKIE));
 }
 
+// gtm-msr.appspot.com url events should not be tracked, as these are not real events
+// See: https://community.piwik.pro/t/what-is-the-gtm-msr-page/2585/15
+const incomingWebUrl = allEvents.page_location || getRequestHeader('referer');
+
+if (incomingWebUrl && incomingWebUrl.lastIndexOf('https://gtm-msr.appspot.com/', 0) === 0) {  
+  if (data.isDebug){
+      log('Exiting early as current url is set to  ', incomingWebUrl);
+  }
+  return data.gtmOnSuccess();
+}
+
+
 // Similar to pixel js bundle
 function getGuid() {
   const uidRegex = createRegex('[x]', 'g');
@@ -307,7 +319,6 @@ function buildParams(allParamsObj) {
     // Return the chained string to be used in the url
   return paramsList.join('&');
 }
-
 
 
 // The event name is taken from either the tag's configuration or from the
