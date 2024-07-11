@@ -18,7 +18,7 @@ ___INFO___
     "ADVERTISING",
     "ATTRIBUTION",
     "MARKETING",
-    "ANALYTICS",
+    "ANALYTICS"
   ],
   "brand": {
     "id": "billygrace",
