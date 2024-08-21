@@ -63,7 +63,8 @@ if (data.isDebug) {
   log("is_app", is_app);
   log('Tag Configuration: ', data);
   log('incomingevents: ', getAllEventData());
-  log('getCookieValues: ', getCookieValues(USER_ID_COOKIE));
+  log('getCookieValues UID: ', getCookieValues(USER_ID_COOKIE));
+  log('getCookieValues GTM: ', getCookieValues(GTMS_ID_COOKIE));
 }
 
 // gtm-msr.appspot.com url events should not be tracked, as these are not real events
@@ -137,21 +138,33 @@ function getAndUpdateGtmBgParamCookies() {
   var save = {};
   var newUtms = false;
 
-  // Parse all query params at once into an object
-  // e.g. vazkir.com?id=57&name=king -> {id: 57, name: 'king'} 
-  const url = allEvents.page_location || getRequestHeader('referer');
-  const parsedParams = url ? parseUrl(url).searchParams : {};
-
-  for (var i = 0, l = utmArray.length; i < l; i++) {
-    const utmKey = utmArray[i];
-
-    // e.g. vazkir.com?utm_source=google.com -> utmKey:utm_source
-    // Basically a null, undefined, '' check for the value of the utm key/name we matched
-    if (isPresent(parsedParams[utmKey])) {
-      save[utmArray[i]] = parsedParams[utmKey];
-      newUtms = true; // If any new one exists, we want to starts saving
+  let url = allEvents.page_location || getRequestHeader('referer');
+  // If it's an app, we need to check if the event is an app_opened_link event
+  if (is_app) {
+    if (allEvents.event_name === 'app_opened_link') {
+      // {"event_name":"app_opened_link","url":"URL_WITH_UTM_PARAMS"}
+      url = allEvents.url || allEvents.page_location;
     }
   }
+
+  if (url) {
+
+    // Parse all query params at once into an object
+    // e.g. vazkir.com?id=57&name=king -> {id: 57, name: 'king'} 
+    const parsedParams = url ? parseUrl(url).searchParams : {};
+
+    for (var i = 0, l = utmArray.length; i < l; i++) {
+      const utmKey = utmArray[i];
+
+      // e.g. vazkir.com?utm_source=google.com -> utmKey:utm_source
+      // Basically a null, undefined, '' check for the value of the utm key/name we matched
+      if (isPresent(parsedParams[utmKey])) {
+        save[utmArray[i]] = parsedParams[utmKey];
+        newUtms = true; // If any new one exists, we want to starts saving
+      }
+    }
+  }
+
 
   // Only write to cookie if there are any query params, don't need to purger existing ones because 'session' based
   if (newUtms) {
@@ -179,26 +192,22 @@ function getAndUpdateGtmBgParamCookies() {
 }
 
 
-function getAppGtmBgParam() {
-  return {}
-}
-
 // Extra custom event data being send in the event
 function mapCustomEventData(eventName, allEventData, data) {
   let customEventData = {};
 
   // Purchase, order completed etc, lowercased check
   if (eventName && VALID_PURCHASE_NAMES.indexOf(eventName.toLowerCase()) >= 0) {
-
-    if (allEventData.value || allEventData.transaction_id) {
+    if (allEventData.value || allEventData.transaction_id || allEventData.price) {
       if (allEventData.price) customEventData.value = allEventData.price;
       if (allEventData.value) customEventData.value = allEventData.value;
       if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id;
       if (allEventData.currency) customEventData.currency = allEventData.currency;
     }
 
+
     // If any items (products) are included to this event
-    else if (allEventData.items && allEventData.items[0]) {
+    if (allEventData.items && allEventData.items[0]) {
       customEventData.content_type = 'product';
 
       // If there is only 1 product to add, so no second entry exists
@@ -252,7 +261,7 @@ function mapCustomEventData(eventName, allEventData, data) {
 }
 
 // Updates and grabs the right params we need to send to the bg backend
-const adParams = is_app ? getAppGtmBgParam() : getAndUpdateGtmBgParamCookies();
+const adParams = getAndUpdateGtmBgParamCookies();
 
 // Optionally overridable to another name
 const eventName = mapEventName(data.inheritEventName, allEvents.event_name);
