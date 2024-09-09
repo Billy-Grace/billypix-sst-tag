@@ -296,7 +296,7 @@ const trackingData = {
 
   // Extra server side params
   ip_override: allEvents.ip_override || '', // Extra server-side parameter for IP override
-  tt: 'web_sst',                   // Tracking type: So where it happened
+  tt: is_app ? 'app' : 'web_sst',                   // Tracking type: So where it happened
   event_id: '',                          // Field not used, as this is set in the event data (ed)
 
   // UTM Query params:
