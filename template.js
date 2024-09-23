@@ -15,6 +15,8 @@ const JSON = require('JSON');
 const Object = require('Object');
 const createRegex = require('createRegex');
 const parseUrl = require('parseUrl');
+const getRequestPath = require('getRequestPath');
+const getType = require('getType');
 
 // Mapping of GA4 events to names billy uses
 const mappedEventNames = {
@@ -55,8 +57,9 @@ const VALID_PURCHASE_NAMES = ['purchase', 'order_completed'];
 // Grab all the data being passed from the sst client
 const allEvents = getAllEventData();
 
+const requestPath = getRequestPath();
 // Check if the incoming request is from the app
-const is_app = allEvents.user_agent.indexOf("app_tracking") >= 0;
+const is_app = allEvents.user_agent.indexOf("app_tracking") >= 0 || requestPath == "/app-tracking";
 
 // Debugging
 if (data.isDebug) {
@@ -71,7 +74,8 @@ if (data.isDebug) {
 // See: https://community.piwik.pro/t/what-is-the-gtm-msr-page/2585/15
 const incomingWebUrl = allEvents.page_location || getRequestHeader('referer');
 
-if (incomingWebUrl && incomingWebUrl.lastIndexOf('https://gtm-msr.appspot.com/', 0) === 0) {
+// We need to check the incomingWebUrl type, because android app sends the url as an object
+if (incomingWebUrl && getType(incomingWebUrl) == 'string' && incomingWebUrl.lastIndexOf('https://gtm-msr.appspot.com/', 0) === 0) {
   if (data.isDebug) {
     log('Exiting early as current url is set to  ', incomingWebUrl);
   }
@@ -142,8 +146,13 @@ function getAndUpdateGtmBgParamCookies() {
   // If it's an app, we need to check if the event is an app_opened_link event
   if (is_app) {
     if (allEvents.event_name === 'app_opened_link') {
-      // {"event_name":"app_opened_link","url":"URL_WITH_UTM_PARAMS"}
-      url = allEvents.url || allEvents.page_location;
+      // IOS: {"event_name":"app_opened_link","url":"URL_WITH_UTM_PARAMS"}
+      // Android: {"cachedFsi":-2,"cachedSsi":-2,"scheme":"NOT CACHED","uriString":"https://bgandriodapp.com/?utm_source=google&utm_medium=gg&utm_campaign=test1","host":"NOT CACHED","port":-2}
+      if (getType(incomingWebUrl) == 'object') {
+        url = allEvents.url.uriString;
+      } else {
+        url = allEvents.url || allEvents.page_location;
+      }
     }
   }
 
