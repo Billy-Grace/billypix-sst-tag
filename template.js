@@ -15,6 +15,8 @@ const JSON = require('JSON');
 const Object = require('Object');
 const createRegex = require('createRegex');
 const parseUrl = require('parseUrl');
+const getRequestPath = require('getRequestPath');
+const getType = require('getType');
 
 // Mapping of GA4 events to names billy uses
 const mappedEventNames = {
@@ -24,13 +26,16 @@ const mappedEventNames = {
   add_to_cart: 'add_to_cart',
   begin_checkout: 'checkout_started',
   search: 'search_submitted',
-  
+
   // Fallback for events coming from wp plugin with a different name
   'gtm4wp.addProductToCartEEC': 'add_to_cart',
   'gtm4wp.productClickEEC': 'page_viewed',
   'gtm4wp.checkoutOptionEEC': 'checkout_started',
   'gtm4wp.checkoutStepEEC': 'payment_info_submitted',
-  'gtm4wp.orderCompletedEEC': 'checkout_completed'
+  'gtm4wp.orderCompletedEEC': 'checkout_completed',
+
+  // App tracking
+  screen_view: 'pageload',
 };
 
 // Options to always use for cookiets
@@ -52,20 +57,27 @@ const VALID_PURCHASE_NAMES = ['purchase', 'order_completed'];
 // Grab all the data being passed from the sst client
 const allEvents = getAllEventData();
 
+const requestPath = getRequestPath();
+// Check if the incoming request is from the app
+const is_app = allEvents.user_agent.indexOf("app_tracking") >= 0 || requestPath == "/app-tracking";
+
 // Debugging
-if (data.isDebug){
+if (data.isDebug) {
+  log("is_app", is_app);
   log('Tag Configuration: ', data);
   log('incomingevents: ', getAllEventData());
-  log('getCookieValues: ', getCookieValues(USER_ID_COOKIE));
+  log('getCookieValues UID: ', getCookieValues(USER_ID_COOKIE));
+  log('getCookieValues GTM: ', getCookieValues(GTMS_ID_COOKIE));
 }
 
 // gtm-msr.appspot.com url events should not be tracked, as these are not real events
 // See: https://community.piwik.pro/t/what-is-the-gtm-msr-page/2585/15
 const incomingWebUrl = allEvents.page_location || getRequestHeader('referer');
 
-if (incomingWebUrl && incomingWebUrl.lastIndexOf('https://gtm-msr.appspot.com/', 0) === 0) {  
-  if (data.isDebug){
-      log('Exiting early as current url is set to  ', incomingWebUrl);
+// We need to check the incomingWebUrl type, because android app sends the url as an object
+if (incomingWebUrl && getType(incomingWebUrl) == 'string' && incomingWebUrl.lastIndexOf('https://gtm-msr.appspot.com/', 0) === 0) {
+  if (data.isDebug) {
+    log('Exiting early as current url is set to  ', incomingWebUrl);
   }
   return data.gtmOnSuccess();
 }
@@ -75,7 +87,7 @@ if (incomingWebUrl && incomingWebUrl.lastIndexOf('https://gtm-msr.appspot.com/',
 function getGuid() {
   const uidRegex = createRegex('[x]', 'g');
 
-  return VERSION + '-xxxxxxxx-'.replace(uidRegex, function() {
+  return VERSION + '-xxxxxxxx-'.replace(uidRegex, function () {
     let r = generateRandom(0, 1000);
     return r.toString(36);
   }) + (1 * getTimestamp()).toString(36);
@@ -84,10 +96,10 @@ function getGuid() {
 // The user ID is taken from a cookie, if present. If it's not present, a new ID
 // is randomly generated and stored for later use.
 function getUserId() {
-  
+
   // Check the existence for both cookie headers or in event data, if not we need to generate one
   const userId = getCookieValues(USER_ID_COOKIE)[0] || allEvents[USER_ID_COOKIE] || getGuid();
-  
+
   // The setCookie API adds a value to the 'cookie' header on the response.
   setCookie(USER_ID_COOKIE, makeString(userId), cookieOptions);
 
@@ -96,24 +108,23 @@ function getUserId() {
 
 
 // Easily add params to the url
-const mapEventName = function(inheritEventName, eventName) {
+const mapEventName = function (inheritEventName, eventName) {
   // Use the custom name defined for this tag 
-  if (!inheritEventName) {
+  if (inheritEventName === false) {
     return data.customEventName;
   }
-  
   // If there is no custom mapping from GA4 to billy, we use the incoming name
-  if (!mappedEventNames[eventName]){
-     return eventName;
+  if (!mappedEventNames[eventName]) {
+    return eventName;
   }
- 
+
   // Map the GA4 event to a similar billy event
   return mappedEventNames[eventName];
 };
 
 
 function isPresent(variable) {
-  return typeof(variable) !== 'undefined' && variable !== null && variable !== '';
+  return typeof (variable) !== 'undefined' && variable !== null && variable !== '';
 }
 
 
@@ -122,7 +133,7 @@ function isPresent(variable) {
 // - If no query from utmArray is found, then do nothing as existing values are 'session' based
 function getAndUpdateGtmBgParamCookies() {
   const utmArray = [
-    'utm_source', 'utm_medium', 'utm_term', 'utm_content', 'utm_campaign', 
+    'utm_source', 'utm_medium', 'utm_term', 'utm_content', 'utm_campaign',
     'utm_source_platform', 'utm_creative_format', 'utm_marketing_tactic',
     'bg_source', 'bg_source_id', 'bg_kw', 'bg_campaign', 'bg_aid_k', 'bg_aid_v'
   ];
@@ -131,42 +142,59 @@ function getAndUpdateGtmBgParamCookies() {
   var save = {};
   var newUtms = false;
 
-  // Parse all query params at once into an object
-  // e.g. vazkir.com?id=57&name=king -> {id: 57, name: 'king'} 
-  const url = allEvents.page_location || getRequestHeader('referer');
-  const parsedParams = parseUrl(url).searchParams;
-
-  for (var i = 0, l = utmArray.length; i < l; i++) {
-    const utmKey = utmArray[i];
-
-    // e.g. vazkir.com?utm_source=google.com -> utmKey:utm_source
-    // Basically a null, undefined, '' check for the value of the utm key/name we matched
-    if (isPresent(parsedParams[utmKey])){
-      save[utmArray[i]] = parsedParams[utmKey];
-      newUtms = true; // If any new one exists, we want to starts saving
+  let url = allEvents.page_location || getRequestHeader('referer');
+  // If it's an app, we need to check if the event is an app_opened_link event
+  if (is_app) {
+    if (allEvents.event_name === 'app_opened_link') {
+      // IOS: {"event_name":"app_opened_link","url":"URL_WITH_UTM_PARAMS"}
+      // Android: {"cachedFsi":-2,"cachedSsi":-2,"scheme":"NOT CACHED","uriString":"https://bgandriodapp.com/?utm_source=google&utm_medium=gg&utm_campaign=test1","host":"NOT CACHED","port":-2}
+      if (getType(incomingWebUrl) == 'object') {
+        url = allEvents.url.uriString;
+      } else {
+        url = allEvents.url || allEvents.page_location;
+      }
     }
   }
-  
+
+  if (url) {
+
+    // Parse all query params at once into an object
+    // e.g. vazkir.com?id=57&name=king -> {id: 57, name: 'king'} 
+    const parsedParams = url ? parseUrl(url).searchParams : {};
+
+    for (var i = 0, l = utmArray.length; i < l; i++) {
+      const utmKey = utmArray[i];
+
+      // e.g. vazkir.com?utm_source=google.com -> utmKey:utm_source
+      // Basically a null, undefined, '' check for the value of the utm key/name we matched
+      if (isPresent(parsedParams[utmKey])) {
+        save[utmArray[i]] = parsedParams[utmKey];
+        newUtms = true; // If any new one exists, we want to starts saving
+      }
+    }
+  }
+
+
   // Only write to cookie if there are any query params, don't need to purger existing ones because 'session' based
-  if (newUtms){
+  if (newUtms) {
 
     // Saves all the incoming utm values into the cookie storage as 1 string, meaning this also
     // e.g {utm_source:'vazkir.com', utm_medium:'phone'} -> '{'utm_source':'vazkir.com','utm_medium':'phone'}'
     // The setCookie API adds a value to the 'cookie' header on the response.
     setCookie(GTMS_ID_COOKIE, JSON.stringify(save), cookieOptions);
-   
-     // Return the dict with the latest params
-     return save;
-  }else{
-    
+
+    // Return the dict with the latest params
+    return save;
+  } else {
+
     // Grab existing utm cookie storage if existent
     const cookieUtms = getCookieValues(GTMS_ID_COOKIE);
-    
+
     // If no entry exists, we don't need to decode the json so return an empty object
     if (!cookieUtms[0]) {
       return {};
     }
-    
+
     // Lets try to parse the stored values for the cookies
     return JSON.parse(cookieUtms[0]) || {};
   }
@@ -174,23 +202,23 @@ function getAndUpdateGtmBgParamCookies() {
 
 
 // Extra custom event data being send in the event
-function mapCustomEventData(eventName, allEventData, data){
+function mapCustomEventData(eventName, allEventData, data) {
   let customEventData = {};
 
   // Purchase, order completed etc, lowercased check
-  if (eventName && VALID_PURCHASE_NAMES.indexOf(eventName.toLowerCase()) >= 0){
-    
-    if (allEventData.value || allEventData.transaction_id){
+  if (eventName && VALID_PURCHASE_NAMES.indexOf(eventName.toLowerCase()) >= 0) {
+    if (allEventData.value || allEventData.transaction_id || allEventData.price) {
       if (allEventData.price) customEventData.value = allEventData.price;
       if (allEventData.value) customEventData.value = allEventData.value;
-      if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id; 
+      if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id;
       if (allEventData.currency) customEventData.currency = allEventData.currency;
     }
-    
-     // If any items (products) are included to this event
-    else if (allEventData.items && allEventData.items[0]) {
+
+
+    // If any items (products) are included to this event
+    if (allEventData.items && allEventData.items[0]) {
       customEventData.content_type = 'product';
-      
+
       // If there is only 1 product to add, so no second entry exists
       if (!allEventData.items[1]) {
         if (allEventData.items[0].item_name) customEventData.content_name = allEventData.items[0].item_name;
@@ -199,7 +227,7 @@ function mapCustomEventData(eventName, allEventData, data){
         if (allEventData.items[0].currency) customEventData.currency = allEventData.items[0].currency;
         if (allEventData.items[0].price) customEventData.value = allEventData.items[0].price;
         if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id;
-        
+
         // Headless shopify suport
         if (allEventData.items[0].order_id) customEventData.oid = allEventData.items[0].order_id;
         if (allEventData.items[0].checkout_token) customEventData.cot = allEventData.items[0].checkout_token;
@@ -209,17 +237,17 @@ function mapCustomEventData(eventName, allEventData, data){
           customEventData.value = allEventData.items[0].value;
         }
         // GA4 can define value outside of item list
-        else if (allEventData.value){
+        else if (allEventData.value) {
           customEventData.value = allEventData.value;
         }
         // Caluclate the order value ourselves
-        else if (allEventData.items[0].price && allEventData.items[0].quantity){
+        else if (allEventData.items[0].price && allEventData.items[0].quantity) {
           customEventData.value = allEventData.items[0].quantity * allEventData.items[0].price;
         }
         // Assuming a quantity of 1, as no quantity given 
-        else if (allEventData.items[0].price){
+        else if (allEventData.items[0].price) {
           customEventData.value = allEventData.items[0].value;
-        }          
+        }
       }
     }
   }
@@ -228,15 +256,15 @@ function mapCustomEventData(eventName, allEventData, data){
   if (data.transaction_id) customEventData.transaction_id = data.transaction_id;
   if (data.value) customEventData.value = data.value;
   if (data.currency) customEventData.currency = data.currency;
-  
+
   // Used for de-duplication and is send as event data
   if (allEventData.event_id) customEventData.event_id = allEventData.event_id;
-  
+
   // Just an empty string so no object parsing will happen on receival
-  if (Object.keys(customEventData).length === 0){
-     return '';
+  if (Object.keys(customEventData).length === 0) {
+    return '';
   }
-  
+
   // Prepare data to be send out
   return JSON.stringify(customEventData);
 }
@@ -250,73 +278,73 @@ const eventName = mapEventName(data.inheritEventName, allEvents.event_name);
 // Grab all the event data we need
 const eventData = mapCustomEventData(eventName, allEvents, data);
 
-if (data.isDebug){
+if (data.isDebug) {
   log('eventName', eventName);
   log('eventData', eventData);
   log('referer', allEvents.page_referrer || getRequestHeader('referer'));
 }
 
 const trackingData = {
-  id:         data.trackingID, // Website ID
-  uid:        getUserId(), // User ID
+  id: data.trackingID, // Website ID
+  uid: getUserId(), // User ID
   session_id: allEvents.session_id || allEvents.ga_session_id, // Custom session id or ga's one
-  ev:         eventName, // Event triggered
-  ed:         eventData, // Custom Event data (e.g. purchase event information)
-  v:          VERSION, // Pixel code version
-  ts:         Math.round(getTimestampMillis() / 1000), // Timestamp when event was triggered
-  sr:         allEvents.screen_resolution || 'unknown', // Screen resolution
-  dt:         allEvents.page_title || 'unknown', // Document title
-  
+  ev: eventName, // Event triggered
+  ed: eventData, // Custom Event data (e.g. purchase event information)
+  v: VERSION, // Pixel code version
+  ts: Math.round(getTimestampMillis() / 1000), // Timestamp when event was triggered
+  sr: allEvents.screen_resolution || 'unknown', // Screen resolution
+  dt: allEvents.page_title || 'unknown', // Document title
+
   // The following parameters are unused and unavailable from GA4 by default, so they are skipped:
-  de:           '', // Document encoding
-  vp:           '', // Viewport size
-  cd:           '', // Color depth
-  bn:           '', // Browser name and version number
-  md:           '', // Is a mobile device?
-  tz:           '', // Timezone
-    
+  de: '', // Document encoding
+  vp: '', // Viewport size
+  cd: '', // Color depth
+  bn: '', // Browser name and version number
+  md: '', // Is a mobile device?
+  tz: '', // Timezone
+
   // Extra server side params
-  ip_override:  allEvents.ip_override || '', // Extra server-side parameter for IP override
-  tt:           'web_sst',                   // Tracking type: So where it happened
-  event_id:     '',                          // Field not used, as this is set in the event data (ed)
+  ip_override: allEvents.ip_override || '', // Extra server-side parameter for IP override
+  tt: is_app ? 'app' : 'web_sst',                   // Tracking type: So where it happened
+  event_id: '',                          // Field not used, as this is set in the event data (ed)
 
   // UTM Query params:
-  utm_source:           adParams.utm_source || '',
-  utm_medium:           adParams.utm_medium || '',
-  utm_term:             adParams.utm_term || '',
-  utm_content:          adParams.utm_content || '',
-  utm_campaign:         adParams.utm_campaign || '',
-  utm_source_platform:  adParams.utm_source_platform || '',
-  utm_creative_format:  adParams.utm_creative_format || '',
+  utm_source: adParams.utm_source || '',
+  utm_medium: adParams.utm_medium || '',
+  utm_term: adParams.utm_term || '',
+  utm_content: adParams.utm_content || '',
+  utm_campaign: adParams.utm_campaign || '',
+  utm_source_platform: adParams.utm_source_platform || '',
+  utm_creative_format: adParams.utm_creative_format || '',
   utm_marketing_tactic: adParams.utm_marketing_tactic || '',
 
   // BG Query params:
-  bg_source:    adParams.bg_source || '',
+  bg_source: adParams.bg_source || '',
   bg_source_id: adParams.bg_source_id || '',
-  bg_kw:        adParams.bg_kw || '',
-  bg_campaign:  adParams.bg_campaign || '',
-  bg_aid_k:     adParams.bg_aid_k || '',
-  
+  bg_kw: adParams.bg_kw || '',
+  bg_campaign: adParams.bg_campaign || '',
+  bg_aid_k: adParams.bg_aid_k || '',
+
   // Longest params that are more error prone
-  dl:         allEvents.page_location || getRequestHeader('origin'),   // Document location
-  rl:         allEvents.page_referrer || getRequestHeader('referer'),  // Referrer location
-  ua:         allEvents.user_agent || 'unknown',                       // User agent
+  dl: allEvents.page_location || getRequestHeader('origin'),   // Document location
+  rl: allEvents.page_referrer || getRequestHeader('referer'),  // Referrer location
+  ua: allEvents.user_agent || 'unknown',                       // User agent
 };
 
 
 function buildParams(allParamsObj) {
   let paramsList = [];
-  
+
   // Add them all to an array while encoded for url passing
-  Object.keys(allParamsObj).forEach(function(key,index) {
+  Object.keys(allParamsObj).forEach(function (key, index) {
     const value = allParamsObj[key];
-    if (typeof(value) !== 'undefined' && value !== null && value !== ''){
-       paramsList.push(key + '=' + encodeUriComponent(value.toString()));
-    }else{
-       paramsList.push(key + '=');
+    if (typeof (value) !== 'undefined' && value !== null && value !== '') {
+      paramsList.push(key + '=' + encodeUriComponent(value.toString()));
+    } else {
+      paramsList.push(key + '=');
     }
-   });
-    // Return the chained string to be used in the url
+  });
+  // Return the chained string to be used in the url
   return paramsList.join('&');
 }
 
@@ -328,7 +356,7 @@ const paramString = buildParams(trackingData);
 
 const backendGetUrl = endpoint + '?' + paramString;
 
-if (data.isDebug){
+if (data.isDebug) {
   log('backendGetUrl: ', backendGetUrl);
 }
 
