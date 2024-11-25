@@ -15,6 +15,8 @@ const JSON = require('JSON');
 const Object = require('Object');
 const createRegex = require('createRegex');
 const parseUrl = require('parseUrl');
+const getContainerVersion = require('getContainerVersion');
+
 
 // Mapping of GA4 events to names billy uses
 const mappedEventNames = {
@@ -48,6 +50,13 @@ const USER_ID_COOKIE = '__cookie_uid';
 const GTMS_ID_COOKIE = '__bg_utm';
 const VERSION = '0.5.0';
 const VALID_PURCHASE_NAMES = ['purchase', 'order_completed'];
+
+// Determine if live debugging needs to be turned on
+const cv = getContainerVersion();
+
+// Difference preview and debug: https://support.google.com/tagmanager/answer/6107056
+// TLDR: Both are set to true when you are debugging your container
+const isGtmDebugSession = cv.debugMode && cv.previewMode;
 
 // Grab all the data being passed from the sst client
 const allEvents = getAllEventData();
@@ -301,6 +310,9 @@ const trackingData = {
   dl:         allEvents.page_location || getRequestHeader('origin'),   // Document location
   rl:         allEvents.page_referrer || getRequestHeader('referer'),  // Referrer location
   ua:         allEvents.user_agent || 'unknown',                       // User agent
+  
+  // Live debugger
+  debug: isGtmDebugSession                    // Send events to live debugger
 };
 
 
