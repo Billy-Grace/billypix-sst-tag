@@ -56,23 +56,40 @@ ___TEMPLATE_PARAMETERS___
   },
   {
     "type": "CHECKBOX",
-    "name": "inheritEventName",
-    "checkboxText": "Inherit Event Name",
+    "name": "useUserDefinedEventMapping",
+    "checkboxText": "Map incoming event name(s) to other event name(s)",
     "simpleValueType": true,
-    "help": "Uncheck this if you want to define a custom event name yourself like \u0027\u0027purchase\", \"subscribe\" etc",
-    "defaultValue": true,
+    "help": "Check this box when certain event names on your client side tracking solution need to be mapped to ones Billy Grace can use. E.g. product_bought -\u003e purchase. Any event name not included in this mapping will be passed on with the same event name",
+    "defaultValue": false,
     "alwaysInSummary": false
   },
   {
-    "type": "TEXT",
-    "name": "customEventName",
-    "displayName": "Custom Event Name",
-    "simpleValueType": true,
-    "help": "e.g. pageload, purchase add_to_cart",
+    "type": "PARAM_TABLE",
+    "name": "userDefinedEventMapping",
+    "paramTableColumns": [
+      {
+        "param": {
+          "type": "TEXT",
+          "name": "inputName",
+          "displayName": "Incoming event name",
+          "simpleValueType": true
+        },
+        "isUnique": true
+      },
+      {
+        "param": {
+          "type": "TEXT",
+          "name": "outputName",
+          "displayName": "Outgoing event name",
+          "simpleValueType": true
+        },
+        "isUnique": true
+      }
+    ],
     "enablingConditions": [
       {
-        "paramName": "inheritEventName",
-        "paramValue": false,
+        "paramName": "useUserDefinedEventMapping",
+        "paramValue": true,
         "type": "EQUALS"
       }
     ],
@@ -80,33 +97,8 @@ ___TEMPLATE_PARAMETERS___
       {
         "type": "NON_EMPTY"
       }
-    ]
-  },
-  {
-    "type": "GROUP",
-    "name": "eventInfoGroup",
-    "displayName": "Event Data",
-    "groupStyle": "ZIPPY_OPEN",
-    "subParams": [
-      {
-        "type": "TEXT",
-        "name": "transaction_id",
-        "displayName": "transaction_id",
-        "simpleValueType": true
-      },
-      {
-        "type": "TEXT",
-        "name": "value",
-        "displayName": "value",
-        "simpleValueType": true
-      },
-      {
-        "type": "TEXT",
-        "name": "currency",
-        "displayName": "currency",
-        "simpleValueType": true
-      }
-    ]
+    ],
+    "displayName": "Can be used to map GA4 event names to ones you want to use in billy grace. The {{ Event Name }} variable will be mapped to the \"Incoming event name\""
   },
   {
     "type": "GROUP",
@@ -115,33 +107,13 @@ ___TEMPLATE_PARAMETERS___
     "groupStyle": "ZIPPY_CLOSED",
     "subParams": [
       {
-        "type": "TEXT",
-        "name": "eventID",
-        "displayName": "Event ID",
+        "type": "CHECKBOX",
+        "name": "serverIsSameSite",
+        "checkboxText": "Top level website domain matches SST Container domain",
         "simpleValueType": true,
-        "help": "Set the event ID field if you have setup Billy Grace tracking both on this server container as well as web container. This way both solutions can track the same website/app, as the event ID will be used to de-duplicate incoming events."
-      },
-      {
-        "type": "RADIO",
-        "name": "cookieSameSite",
-        "radioItems": [
-          {
-            "value": "None",
-            "displayValue": "None"
-          },
-          {
-            "value": "Lax",
-            "displayValue": "Lax"
-          },
-          {
-            "value": "Strict",
-            "displayValue": "Strict"
-          }
-        ],
-        "simpleValueType": true,
-        "help": "Only uses \"none\" if the server endpoint is doesn\u0027t share the same top level domain, as this will get your cookies marked as third party. See more: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie#samesitesamesite-value",
-        "defaultValue": "None",
-        "displayName": "Samesite settings"
+        "help": "Do not check this box is the top level domain of the container does not match the website\u0027s domain. For example if the website domain is mywebsite.com and you server url is something like the following, then this box should stay unchecked:\n- https://server-side-tagging-randomalpha1-uc.a.run.app\n- https://sometrackingdomain.com\n\n\nPlease check this box if your top level domain matches the server domain, this includes subdomains as well. If your website is mywebsite.com and your container url is for example tracking.mywebsite.com, then you should still check this box. \n\n\nThis setting is important as it determines if your cookies are first or third party. If the cookie stays within the same domain (server and website), then they are marked as first party. However if your cookies are cross domain (when the SST domain differs), then your cookies are marked as third party, which may reduce the quality of your tracking results",
+        "alwaysInSummary": true,
+        "defaultValue": false
       },
       {
         "type": "CHECKBOX",
@@ -190,9 +162,11 @@ const JSON = require('JSON');
 const Object = require('Object');
 const createRegex = require('createRegex');
 const parseUrl = require('parseUrl');
+const getContainerVersion = require('getContainerVersion');
+
 
 // Mapping of GA4 events to names billy uses
-const mappedEventNames = {
+const defaultEventNameMapping = {
   page_view: 'pageload',
   'gtm.dom': 'pageload',
   add_payment_info: 'payment_info_submitted',
@@ -208,11 +182,20 @@ const mappedEventNames = {
   'gtm4wp.orderCompletedEEC': 'checkout_completed'
 };
 
+
+// Determines first or third party context, when serverIsSameSite == true first party
+function getSameSiteAttribute() {
+  if (data.serverIsSameSite == true){
+     return "Lax";
+  }
+  return "None";
+}
+
 // Options to always use for cookiets
 const cookieOptions = {
   domain: 'auto',                   // Grabs the TLD from this request
   path: '/',                        // For all paths on this domain
-  samesite: data.cookieSameSite,    // 'none' is third party, this is still first
+  samesite: getSameSiteAttribute(), // 'none' is third party, this is still first
   secure: true,                     // Only https
   'max-age': 3600 * 24 * 365 * 2,   // 2 years
   HttpOnly: !!data.cookieHttpOnly   // Double negation because the true value not string 'true'
@@ -223,6 +206,13 @@ const USER_ID_COOKIE = '__cookie_uid';
 const GTMS_ID_COOKIE = '__bg_utm';
 const VERSION = '0.5.0';
 const VALID_PURCHASE_NAMES = ['purchase', 'order_completed'];
+
+// Determine if live debugging needs to be turned on
+const cv = getContainerVersion();
+
+// Difference preview and debug: https://support.google.com/tagmanager/answer/6107056
+// TLDR: Both are set to true when you are debugging your container
+const isGtmDebugSession = cv.debugMode && cv.previewMode;
 
 // Grab all the data being passed from the sst client
 const allEvents = getAllEventData();
@@ -271,19 +261,31 @@ function getUserId() {
 
 
 // Easily add params to the url
-const mapEventName = function(inheritEventName, eventName) {
-  // Use the custom name defined for this tag 
-  if (!inheritEventName) {
-    return data.customEventName;
+const mapEventName = function(useUserDefinedEventMapping, userDefinedEventMapping, eventName) {
+  
+  // When the user has defined custom mappings of event names  
+  if (useUserDefinedEventMapping) {
+    
+    // Check if current event name is defined in their own mapping
+    const matchedEvents = userDefinedEventMapping.filter(function(obj) {
+      return obj.inputName === eventName;
+     });
+    
+     // When its not mapped, let the rest of the function runs its course
+    if (matchedEvents.length > 0) {
+      
+        // Inputnames are unique, so only 1 match should be found
+        return matchedEvents[0].outputName;
+    }
   }
   
   // If there is no custom mapping from GA4 to billy, we use the incoming name
-  if (!mappedEventNames[eventName]){
+  if (!defaultEventNameMapping[eventName]){
      return eventName;
   }
  
   // Map the GA4 event to a similar billy event
-  return mappedEventNames[eventName];
+  return defaultEventNameMapping[eventName];
 };
 
 
@@ -398,11 +400,6 @@ function mapCustomEventData(eventName, allEventData, data){
       }
     }
   }
-
-  // If any of the values are set, then override anything we currently have
-  if (data.transaction_id) customEventData.transaction_id = data.transaction_id;
-  if (data.value) customEventData.value = data.value;
-  if (data.currency) customEventData.currency = data.currency;
   
   // Used for de-duplication and is send as event data
   if (allEventData.event_id) customEventData.event_id = allEventData.event_id;
@@ -420,7 +417,7 @@ function mapCustomEventData(eventName, allEventData, data){
 const adParams = getAndUpdateGtmBgParamCookies();
 
 // Optionally overridable to another name
-const eventName = mapEventName(data.inheritEventName, allEvents.event_name);
+const eventName = mapEventName(data.useUserDefinedEventMapping, data.userDefinedEventMapping, allEvents.event_name);
 
 // Grab all the event data we need
 const eventData = mapCustomEventData(eventName, allEvents, data);
@@ -476,6 +473,9 @@ const trackingData = {
   dl:         allEvents.page_location || getRequestHeader('origin'),   // Document location
   rl:         allEvents.page_referrer || getRequestHeader('referer'),  // Referrer location
   ua:         allEvents.user_agent || 'unknown',                       // User agent
+  
+  // Live debugger
+  debug:      isGtmDebugSession                // Send events to live debugger
 };
 
 
@@ -507,6 +507,15 @@ if (data.isDebug){
   log('backendGetUrl: ', backendGetUrl);
 }
 
+// When the unit tests are called, only check the final object
+// Don't send out the actual data to our backend
+if (data.isUnitTest){
+  return {
+    "trackingData": trackingData,
+    "paramString": paramString,
+    "backendGetUrl": backendGetUrl,
+  };
+}
 
 // The sendHttpGet API takes a URL and returns a promise that resolves with the
 // result once the request completes. You must call data.gtmOnSuccess() or
@@ -802,6 +811,16 @@ ___SERVER_PERMISSIONS___
       "isEditedByUser": true
     },
     "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "read_container_data",
+        "versionId": "1"
+      },
+      "param": []
+    },
+    "isRequired": true
   }
 ]
 
@@ -810,62 +829,119 @@ ___TESTS___
 
 scenarios:
 - name: page_view_test
-  code: "// Uncoming event data to parse\nmock('getAllEventData', mockPageviewData);\n\
-    \n// Call runCode to run the template's code.\nrunCode(mockInputData);\n\n// Verify\
-    \ that the tag finished successfully, checking 'gtmOnSuccess' does not work \n\
-    assertApi('sendHttpGet').wasCalled();"
-- name: purchase_single_test
-  code: "\n// Purchase data with items and value\nmock('getAllEventData', mockPurchaseEventData);\n\
-    \n\n// Call runCode to run the template's code.\nrunCode(mockInputData);\n\n//\
-    \ Verify that the tag finished successfully, checking 'gtmOnSuccess' does not\
-    \ work \nassertApi('sendHttpGet').wasCalled();"
-- name: utms_test
-  code: "// Make sure to set utms on the location so that they are parsed\nmockPageviewData.page_location\
-    \ = \"https://www.billygrace.com?utm_source=google&bg_source_id=123&gtm_debug=1717425224929\"\
-    ;\n\n// Pageview with utms set\nmock('getAllEventData', mockPageviewData);\n\n\
-    // Call runCode to run the template's code.\nrunCode(mockInputData);\n\n// Verify\
-    \ that the tag finished successfully, checking 'gtmOnSuccess' does not work \n\
-    assertApi('sendHttpGet').wasCalled();"
-- name: gtm-msr_appspot_fake_url
-  code: |-
-    // When the location is set to the test url, then it needs to exit fast
-    mockPageviewData.page_location = "https://gtm-msr.appspot.com/render2?id=GTM-XXXXXX";
-
-    // Pageview with utms set
+  code: |
+    // Uncoming event data to parse
     mock('getAllEventData', mockPageviewData);
 
     // Call runCode to run the template's code.
-    runCode(mockInputData);
+    const output = runCode(mockInputData);
+    const trackingData = output.trackingData;
 
-    // Verify that no call was made to Billy's backend
-    assertApi('sendHttpGet').wasNotCalled();
+    // Lets check of page_view is mapped to pageload
+    assertThat(mockPageviewData.event_name).isEqualTo('page_view');
+    assertThat(trackingData.ev).isEqualTo('pageload');
+- name: purchase_single_test
+  code: |+
+    // Purchase data with items and value
+    mock('getAllEventData', mockPurchaseEventData);
 
-    // Verify that the tag finished successfully.
-    assertApi('gtmOnSuccess').wasCalled();
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+    const trackingData = output.trackingData;
+    const ed = JSON.parse(trackingData.ed); // String to object
+
+    log("trackingdata: ", ed);
+    log("mockPurchaseEventData :", mockPurchaseEventData.value);
+
+    // Lets check of page_view is mapped to pageload
+    assertThat(mockPurchaseEventData.event_name).isEqualTo('purchase');
+    assertThat(trackingData.ev).isEqualTo('purchase');
+
+    // Lets check that all the event data is parsed correctly
+    assertThat(ed.value).isEqualTo(mockPurchaseEventData.value);
+    assertThat(ed.transaction_id).isEqualTo(mockPurchaseEventData.transaction_id);
+
+- name: utms_test
+  code: |+
+    // Make sure to set utms on the location so that they are parsed
+    mockPageviewData.page_location = "https://www.billygrace.com?utm_source=google&bg_source_id=123&gtm_debug=1717425224929";
+
+    // Purchase data with items and value
+    mock('getAllEventData', mockPageviewData);
+
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+    const trackingData = output.trackingData;
+
+    // Make sure utms are passed on
+    assertThat(trackingData.utm_source).isEqualTo('google');
+    assertThat(trackingData.bg_source_id).isEqualTo('123');
+
+- name: gtm-msr_appspot_fake_url
+  code: "// When the location is set to the test url, then it needs to exit fast\n\
+    mockPageviewData.page_location = \"https://gtm-msr.appspot.com/render2?id=GTM-XXXXXX\"\
+    ;\n\n// The sendHttpGet will never be reached in unit test mode,\n// So we want\
+    \ to turn that off to make sure it does not get called\nmockInputData.isUnitTest\
+    \ = false; \n\n// Pageview with utms set\nmock('getAllEventData', mockPageviewData);\n\
+    \n// Call runCode to run the template's code.\nrunCode(mockInputData);\n\n// Verify\
+    \ that no call was made to Billy's backend\nassertApi('sendHttpGet').wasNotCalled();\n\
+    \n// Verify that the tag finished successfully.\nassertApi('gtmOnSuccess').wasCalled();"
+- name: custom_mapping_test
+  code: |-
+    // This event name is included in the mapping to "purchase" in the userDefinedEventMapping
+    mockPageviewData.event_name = "aankoop";
+
+    // Uncoming event data to parse
+    mock('getAllEventData', mockPageviewData);
+
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+    const trackingData = output.trackingData;
+
+    // Lets check of page_view is mapped to pageload
+    assertThat(mockPageviewData.event_name).isEqualTo("aankoop");
+    assertThat(trackingData.ev).isEqualTo("purchase");
+- name: default_mapping_test
+  code: |-
+    // This event name is included in the mapping to "purchase" in the userDefinedEventMapping
+    // The default mapping includes some standard GA4 names that we know to map to the righ bg values
+    // For example "begin_checkout" is actually named "checkout_started" in BG
+    mockPageviewData.event_name = "begin_checkout";
+
+    // Uncoming event data to parse
+    mock('getAllEventData', mockPageviewData);
+
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+    const trackingData = output.trackingData;
+
+    // Lets check of page_view is mapped to pageload
+    assertThat(mockPageviewData.event_name).isEqualTo("begin_checkout");
+    assertThat(trackingData.ev).isEqualTo("checkout_started");
 setup: "// Docs: https://www.simoahava.com/analytics/writing-tests-for-custom-templates-google-tag-manager/\n\
-  const log = require('logToConsole');\n\nlet mockInputData = {\n  // Main data\n\
-  \  \"trackingID\": \"ID-XX-XXXX\",\n  \"isDebug\": true,\n  \n  // Event dara\n\
-  \  \"inheritEventName\": true,\n  \"customEventName\": undefined,\n  \"value\":\
-  \ undefined,\n  \"transaction_id\": undefined,\n  \"currency\": undefined,\n  \n\
-  \  // Cookie data\n  \"cookieHttpOnly\": true,\n  \"endpointUrl\": \"https://staging.b.billypx.com\"\
-  ,\n  \"cookieSameSite\": \"None\",\n  \n  // Extra data \n  \"eventID\": \"unique_eid_123\"\
-  \n};\n\nlet mockPageviewData = {\n  \"x-ga-protocol_version\": \"2\",\n  \"x-ga-measurement_id\"\
-  : \"G-SOME-ID\",\n  \"x-ga-gtm_version\": \"12345VERSION\",\n  \"client_id\": \"\
-  1263466998.1711449381\",\n  \"x-ga-ecid\": \"124ECID\",\n  \"language\": \"en-gb\"\
-  ,\n  \"screen_resolution\": \"2560x1080\",\n  \"event_location\": {\n    \"country\"\
-  : \"NL\",\n    \"region\": \"NH\"\n  },\n  \"x-ga-are\": \"1\",\n  \"x-ga-pscdl\"\
-  : \"\",\n  \"x-ga-request_count\": 1,\n  \"ga_session_id\": \"1712050703\",\n  \"\
-  ga_session_number\": 8,\n  \"x-ga-mp2-seg\": \"1\",\n  \"page_location\": \"https://www.billygrace.com\"\
-  ,\n  \"page_referrer\": \"https://www.billygrace.com/feature-overview/\",\n  \"\
-  page_title\": \"Billy - GTM\",\n  \"event_name\": \"page_view\",\n  \"x-ga-tfd\"\
-  : 253,\n  \"ip_override\": \"127.12.57.00\",\n  \"user_agent\": \"Mozilla/5.0 (Linux;\
-  \ U; Linux i676 ) Gecko/20100101 Firefox/68.3\"\n};\n\n\nlet mockPurchaseEventData\
-  \ = {\n  \"x-ga-protocol_version\": \"2\",\n  \"x-ga-measurement_id\": \"G-SOME-ID\"\
-  ,\n  \"x-ga-gtm_version\": \"12345VERSION\",\n  \"client_id\": \"1263466998.1711449381\"\
-  ,\n  \"x-ga-ecid\": \"124ECID\",\n  \"language\": \"en-gb\",\n  \"screen_resolution\"\
-  : \"2560x1080\",\n  \"event_location\": {\n    \"country\": \"NL\",\n    \"region\"\
-  : \"NH\"\n  },\n  \"x-ga-are\": \"1\",\n  \"x-ga-pscdl\": \"\",\n  \"x-ga-request_count\"\
-  : 1,\n  \"ga_session_id\": \"1712050703\",\n  \"ga_session_number\": 8,\n  \"x-ga-mp2-seg\"\
+  const log = require('logToConsole');\nconst JSON = require('JSON');\n\nlet mockInputData\
+  \ = {\n  // Main data\n  \"trackingID\": \"ID-XX-XXXX\",  \n  \"useUserDefinedEventMapping\"\
+  : true,\n  \"userDefinedEventMapping\": [{ \"inputName\": 'aankoop', \"outputName\"\
+  : 'purchase' }],\n  \n  // Extra settings\n  \"cookieHttpOnly\": true,\n  \"serverIsSameSite\"\
+  : false,\n  \"useStaging\": true,\n  \"isDebug\": false,\n  \n  // Only when unit\
+  \ testing:\n  \"isUnitTest\": true\n};\n\n\n\nlet mockPageviewData = {\n  \"x-ga-protocol_version\"\
+  : \"2\",\n  \"x-ga-measurement_id\": \"G-SOME-ID\",\n  \"x-ga-gtm_version\": \"\
+  12345VERSION\",\n  \"client_id\": \"1263466998.1711449381\",\n  \"x-ga-ecid\": \"\
+  124ECID\",\n  \"language\": \"en-gb\",\n  \"screen_resolution\": \"2560x1080\",\n\
+  \  \"event_location\": {\n    \"country\": \"NL\",\n    \"region\": \"NH\"\n  },\n\
+  \  \"x-ga-are\": \"1\",\n  \"x-ga-pscdl\": \"\",\n  \"x-ga-request_count\": 1,\n\
+  \  \"ga_session_id\": \"1712050703\",\n  \"ga_session_number\": 8,\n  \"x-ga-mp2-seg\"\
+  : \"1\",\n  \"page_location\": \"https://www.billygrace.com\",\n  \"page_referrer\"\
+  : \"https://www.billygrace.com/feature-overview/\",\n  \"page_title\": \"Billy -\
+  \ GTM\",\n  \"event_name\": \"page_view\",\n  \"x-ga-tfd\": 253,\n  \"ip_override\"\
+  : \"127.12.57.00\",\n  \"user_agent\": \"Mozilla/5.0 (Linux; U; Linux i676 ) Gecko/20100101\
+  \ Firefox/68.3\"\n};\n\n\nlet mockPurchaseEventData = {\n  \"x-ga-protocol_version\"\
+  : \"2\",\n  \"x-ga-measurement_id\": \"G-SOME-ID\",\n  \"x-ga-gtm_version\": \"\
+  12345VERSION\",\n  \"client_id\": \"1263466998.1711449381\",\n  \"x-ga-ecid\": \"\
+  124ECID\",\n  \"language\": \"en-gb\",\n  \"screen_resolution\": \"2560x1080\",\n\
+  \  \"event_location\": {\n    \"country\": \"NL\",\n    \"region\": \"NH\"\n  },\n\
+  \  \"x-ga-are\": \"1\",\n  \"x-ga-pscdl\": \"\",\n  \"x-ga-request_count\": 1,\n\
+  \  \"ga_session_id\": \"1712050703\",\n  \"ga_session_number\": 8,\n  \"x-ga-mp2-seg\"\
   : \"1\",\n  \"page_location\": \"https://www.billygrace.com\",\n  \"page_referrer\"\
   : \"https://www.billygrace.com/feature-overview/\",\n  \"page_title\": \"Billy -\
   \ GTM\",\n    \"event_name\": \"purchase\",\n  \"items\": [{\n    \"item_id\": \"\

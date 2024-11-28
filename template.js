@@ -19,7 +19,7 @@ const getContainerVersion = require('getContainerVersion');
 
 
 // Mapping of GA4 events to names billy uses
-const mappedEventNames = {
+const defaultEventNameMapping = {
   page_view: 'pageload',
   'gtm.dom': 'pageload',
   add_payment_info: 'payment_info_submitted',
@@ -35,11 +35,20 @@ const mappedEventNames = {
   'gtm4wp.orderCompletedEEC': 'checkout_completed'
 };
 
+
+// Determines first or third party context, when serverIsSameSite == true first party
+function getSameSiteAttribute() {
+  if (data.serverIsSameSite == true){
+     return "Lax";
+  }
+  return "None";
+}
+
 // Options to always use for cookiets
 const cookieOptions = {
   domain: 'auto',                   // Grabs the TLD from this request
   path: '/',                        // For all paths on this domain
-  samesite: data.cookieSameSite,    // 'none' is third party, this is still first
+  samesite: getSameSiteAttribute(), // 'none' is third party, this is still first
   secure: true,                     // Only https
   'max-age': 3600 * 24 * 365 * 2,   // 2 years
   HttpOnly: !!data.cookieHttpOnly   // Double negation because the true value not string 'true'
@@ -105,19 +114,31 @@ function getUserId() {
 
 
 // Easily add params to the url
-const mapEventName = function(inheritEventName, eventName) {
-  // Use the custom name defined for this tag 
-  if (!inheritEventName) {
-    return data.customEventName;
+const mapEventName = function(useUserDefinedEventMapping, userDefinedEventMapping, eventName) {
+  
+  // When the user has defined custom mappings of event names  
+  if (useUserDefinedEventMapping) {
+    
+    // Check if current event name is defined in their own mapping
+    const matchedEvents = userDefinedEventMapping.filter(function(obj) {
+      return obj.inputName === eventName;
+     });
+    
+     // When its not mapped, let the rest of the function runs its course
+    if (matchedEvents.length > 0) {
+      
+        // Inputnames are unique, so only 1 match should be found
+        return matchedEvents[0].outputName;
+    }
   }
   
   // If there is no custom mapping from GA4 to billy, we use the incoming name
-  if (!mappedEventNames[eventName]){
+  if (!defaultEventNameMapping[eventName]){
      return eventName;
   }
  
   // Map the GA4 event to a similar billy event
-  return mappedEventNames[eventName];
+  return defaultEventNameMapping[eventName];
 };
 
 
@@ -232,11 +253,6 @@ function mapCustomEventData(eventName, allEventData, data){
       }
     }
   }
-
-  // If any of the values are set, then override anything we currently have
-  if (data.transaction_id) customEventData.transaction_id = data.transaction_id;
-  if (data.value) customEventData.value = data.value;
-  if (data.currency) customEventData.currency = data.currency;
   
   // Used for de-duplication and is send as event data
   if (allEventData.event_id) customEventData.event_id = allEventData.event_id;
@@ -254,7 +270,7 @@ function mapCustomEventData(eventName, allEventData, data){
 const adParams = getAndUpdateGtmBgParamCookies();
 
 // Optionally overridable to another name
-const eventName = mapEventName(data.inheritEventName, allEvents.event_name);
+const eventName = mapEventName(data.useUserDefinedEventMapping, data.userDefinedEventMapping, allEvents.event_name);
 
 // Grab all the event data we need
 const eventData = mapCustomEventData(eventName, allEvents, data);
@@ -312,7 +328,7 @@ const trackingData = {
   ua:         allEvents.user_agent || 'unknown',                       // User agent
   
   // Live debugger
-  debug: isGtmDebugSession                    // Send events to live debugger
+  debug:      isGtmDebugSession                // Send events to live debugger
 };
 
 
@@ -344,6 +360,15 @@ if (data.isDebug){
   log('backendGetUrl: ', backendGetUrl);
 }
 
+// When the unit tests are called, only check the final object
+// Don't send out the actual data to our backend
+if (data.isUnitTest){
+  return {
+    "trackingData": trackingData,
+    "paramString": paramString,
+    "backendGetUrl": backendGetUrl,
+  };
+}
 
 // The sendHttpGet API takes a URL and returns a promise that resolves with the
 // result once the request completes. You must call data.gtmOnSuccess() or
