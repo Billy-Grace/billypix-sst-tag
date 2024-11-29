@@ -1,5 +1,12 @@
 homepage: "https://www.billygrace.com"
 documentation: "https://help.billygrace.com/en/"
 versions:
+  - sha: 0ca1deec6b0eb7422051f30c691d74c4c3a2c948
+    changeNotes: |2
+      * Added support for the debug flag to be passed on
+      * Add support for allowing for multiple event name mappings
+        - Like GA4 event called "completed_order" to map to bg event "order_completed"
+      * Made the cookie settings for straight forward, by specifying if the top level domain for the sst container matches the website domain
+      * Removed unused field event id, as this is being passed from the web tracking and not set on the sst container
   - sha: 7f320196fb9ccbf69380fdd616497af645ebafb4
     changeNotes: Initial release
