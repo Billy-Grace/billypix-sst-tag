@@ -1,6 +1,11 @@
 homepage: "https://www.billygrace.com"
 documentation: "https://help.billygrace.com/en/"
 versions:
+  - sha: 6ea040b0b421f0e062215707c765b1ab551ff654
+    changeNotes: |2
+      * Any event can now include event data containing: value, transaction_id or currency
+      * Fixed issue with timestamp not matching
+      * Added unit test for use case non purchase event with custom data
   - sha: 0ca1deec6b0eb7422051f30c691d74c4c3a2c948
     changeNotes: |2
       * Added support for the debug flag to be passed on
