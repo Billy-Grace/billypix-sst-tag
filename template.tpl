@@ -205,7 +205,6 @@ const cookieOptions = {
 const USER_ID_COOKIE = '__cookie_uid';
 const GTMS_ID_COOKIE = '__bg_utm';
 const VERSION = '0.5.0';
-const VALID_PURCHASE_NAMES = ['purchase', 'order_completed'];
 
 // Determine if live debugging needs to be turned on
 const cv = getContainerVersion();
@@ -353,53 +352,53 @@ function getAndUpdateGtmBgParamCookies() {
 // Extra custom event data being send in the event
 function mapCustomEventData(eventName, allEventData, data){
   let customEventData = {};
+  
+  log("allEventData: ", allEventData);
 
-  // Purchase, order completed etc, lowercased check
-  if (eventName && VALID_PURCHASE_NAMES.indexOf(eventName.toLowerCase()) >= 0){
-    
-    if (allEventData.value || allEventData.transaction_id){
-      if (allEventData.price) customEventData.value = allEventData.price;
-      if (allEventData.value) customEventData.value = allEventData.value;
-      if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id; 
-      if (allEventData.currency) customEventData.currency = allEventData.currency;
-    }
-    
-     // If any items (products) are included to this event
-    else if (allEventData.items && allEventData.items[0]) {
-      customEventData.content_type = 'product';
-      
-      // If there is only 1 product to add, so no second entry exists
-      if (!allEventData.items[1]) {
-        if (allEventData.items[0].item_name) customEventData.content_name = allEventData.items[0].item_name;
-        if (allEventData.items[0].item_category) customEventData.content_category = allEventData.items[0].item_category;
-        if (allEventData.items[0].quantity) customEventData.quantity = allEventData.items[0].quantity;
-        if (allEventData.items[0].currency) customEventData.currency = allEventData.items[0].currency;
-        if (allEventData.items[0].price) customEventData.value = allEventData.items[0].price;
-        if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id;
-        
-        // Headless shopify suport
-        if (allEventData.items[0].order_id) customEventData.oid = allEventData.items[0].order_id;
-        if (allEventData.items[0].checkout_token) customEventData.cot = allEventData.items[0].checkout_token;
+  // We can assume its probably an event related to checkout
+  if (allEventData.value || allEventData.transaction_id){
+    if (allEventData.price) customEventData.value = allEventData.price;
+    if (allEventData.value) customEventData.value = allEventData.value;
+    if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id; 
+    if (allEventData.currency) customEventData.currency = allEventData.currency;
+  }
 
-        // Order value to use for this order
-        if (allEventData.items[0].value) {
-          customEventData.value = allEventData.items[0].value;
-        }
-        // GA4 can define value outside of item list
-        else if (allEventData.value){
-          customEventData.value = allEventData.value;
-        }
-        // Caluclate the order value ourselves
-        else if (allEventData.items[0].price && allEventData.items[0].quantity){
-          customEventData.value = allEventData.items[0].quantity * allEventData.items[0].price;
-        }
-        // Assuming a quantity of 1, as no quantity given 
-        else if (allEventData.items[0].price){
-          customEventData.value = allEventData.items[0].value;
-        }          
+  // If any items (products) are included to this event
+  else if (allEventData.items && allEventData.items[0]) {
+    customEventData.content_type = 'product';
+
+    // If there is only 1 product to add, so no second entry exists
+    if (!allEventData.items[1]) {
+      if (allEventData.items[0].item_name) customEventData.content_name = allEventData.items[0].item_name;
+      if (allEventData.items[0].item_category) customEventData.content_category = allEventData.items[0].item_category;
+      if (allEventData.items[0].quantity) customEventData.quantity = allEventData.items[0].quantity;
+      if (allEventData.items[0].currency) customEventData.currency = allEventData.items[0].currency;
+      if (allEventData.items[0].price) customEventData.value = allEventData.items[0].price;
+      if (allEventData.transaction_id) customEventData.transaction_id = allEventData.transaction_id;
+
+      // Headless shopify suport
+      if (allEventData.items[0].order_id) customEventData.oid = allEventData.items[0].order_id;
+      if (allEventData.items[0].checkout_token) customEventData.cot = allEventData.items[0].checkout_token;
+
+      // Order value to use for this order
+      if (allEventData.items[0].value) {
+        customEventData.value = allEventData.items[0].value;
       }
+      // GA4 can define value outside of item list
+      else if (allEventData.value){
+        customEventData.value = allEventData.value;
+      }
+      // Caluclate the order value ourselves
+      else if (allEventData.items[0].price && allEventData.items[0].quantity){
+        customEventData.value = allEventData.items[0].quantity * allEventData.items[0].price;
+      }
+      // Assuming a quantity of 1, as no quantity given 
+      else if (allEventData.items[0].price){
+        customEventData.value = allEventData.items[0].value;
+      }          
     }
   }
+  
   
   // Used for de-duplication and is send as event data
   if (allEventData.event_id) customEventData.event_id = allEventData.event_id;
@@ -435,7 +434,7 @@ const trackingData = {
   ev:         eventName, // Event triggered
   ed:         eventData, // Custom Event data (e.g. purchase event information)
   v:          VERSION, // Pixel code version
-  ts:         Math.round(getTimestampMillis() / 1000), // Timestamp when event was triggered
+  ts:         Math.round(getTimestampMillis()), // Timestamp when event was triggered
   sr:         allEvents.screen_resolution || 'unknown', // Screen resolution
   dt:         allEvents.page_title || 'unknown', // Document title
   
@@ -918,6 +917,29 @@ scenarios:
     // Lets check of page_view is mapped to pageload
     assertThat(mockPageviewData.event_name).isEqualTo("begin_checkout");
     assertThat(trackingData.ev).isEqualTo("checkout_started");
+- name: custom_event_with_ed
+  code: |-
+    const mockCheckoutStartedData = mockPurchaseEventData;
+    mockCheckoutStartedData.event_name = "checkout_started";
+
+    // Purchase data with items and value
+    mock('getAllEventData', mockCheckoutStartedData);
+
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+    const trackingData = output.trackingData;
+    const ed = JSON.parse(trackingData.ed); // String to object
+
+    log("trackingdata: ", ed);
+    log("mockCheckoutStartedData :", mockCheckoutStartedData.value);
+
+    // Lets check of page_view is mapped to pageload
+    assertThat(mockPurchaseEventData.event_name).isEqualTo('checkout_started');
+    assertThat(trackingData.ev).isEqualTo('checkout_started');
+
+    // Lets check that all the event data is parsed correctly
+    assertThat(ed.value).isEqualTo(mockPurchaseEventData.value);
+    assertThat(ed.transaction_id).isEqualTo(mockPurchaseEventData.transaction_id);
 setup: "// Docs: https://www.simoahava.com/analytics/writing-tests-for-custom-templates-google-tag-manager/\n\
   const log = require('logToConsole');\nconst JSON = require('JSON');\n\nlet mockInputData\
   \ = {\n  // Main data\n  \"trackingID\": \"ID-XX-XXXX\",  \n  \"useUserDefinedEventMapping\"\
