@@ -271,6 +271,45 @@ const eventName = mapEventName(data.useUserDefinedEventMapping, data.userDefined
 // Grab all the event data we need
 const eventData = mapCustomEventData(eventName, allEvents, data);
 
+
+// Decide where geo values come from. When data.overrideGeo is on AND the user
+// has filled in at least one of the data.geo* fields, use ONLY the user-provided
+// values (no mixing with allEvents.event_location, since they may refer to a
+// different location). Otherwise, fall back to the incoming event_location.
+function getGeoData(allEvents, data) {
+  const hasManualOverride =
+    isPresent(data.geoCountry)    ||
+    isPresent(data.geoRegion)     ||
+    isPresent(data.geoCity)       ||
+    isPresent(data.geoPostalCode) ||
+    isPresent(data.geoLat)        ||
+    isPresent(data.geoLong);
+
+  if (data.overrideGeo === true && hasManualOverride) {
+    return {
+      country:    data.geoCountry    || '',
+      region:     data.geoRegion     || '',
+      city:       data.geoCity       || '',
+      postalCode: data.geoPostalCode || '',
+      lat:        data.geoLat        || '',
+      lng:        data.geoLong       || ''
+    };
+  }
+
+  const evtLoc = allEvents.event_location || {};
+  return {
+    country:    evtLoc.country     || '',
+    region:     evtLoc.region      || '',
+    city:       evtLoc.city        || '',
+    postalCode: evtLoc.postal_code || '',
+    lat:        evtLoc.latitude    || '',
+    lng:        evtLoc.longitude   || ''
+  };
+}
+
+const geo = getGeoData(allEvents, data);
+
+
 if (data.isDebug){
   log('eventName', eventName);
   log('eventData', eventData);
@@ -318,11 +357,19 @@ const trackingData = {
   bg_campaign:  adParams.bg_campaign || '',
   bg_aid_k:     adParams.bg_aid_k || '',
   
+  // Geo
+  cn_override:  geo.country,    // Country (abbreviated, e.g. NL)
+  rg_override:  geo.region,     // Region (abbreviated, e.g. NH)
+  ct_override:  geo.city,       // City (if available)
+  pc_override:  geo.postalCode, // Postal / ZIP code
+  lat_override: geo.lat,        // Latitude
+  lng_override: geo.lng,        // Longitude
+
   // Longest params that are more error prone
   dl:         allEvents.page_location || getRequestHeader('origin'),   // Document location
   rl:         allEvents.page_referrer || getRequestHeader('referer'),  // Referrer location
   ua:         allEvents.user_agent || 'unknown',                       // User agent
-  
+
   // Live debugger
   debug:      isGtmDebugSession                // Send events to live debugger
 };
