@@ -139,6 +139,101 @@ ___TEMPLATE_PARAMETERS___
         "help": "Only check this box when explicitly required by Billy Grace staff"
       }
     ]
+  },
+  {
+    "type": "GROUP",
+    "name": "geoOverrides",
+    "displayName": "GEO Values",
+    "groupStyle": "ZIPPY_CLOSED",
+    "subParams": [
+      {
+        "type": "CHECKBOX",
+        "name": "overrideGeo",
+        "checkboxText": "Map your own GEO values",
+        "simpleValueType": true,
+        "alwaysInSummary": true,
+        "help": "Will try to map these values ourselves when none are given"
+      },
+      {
+        "type": "TEXT",
+        "name": "geoCountry",
+        "displayName": "Country",
+        "simpleValueType": true,
+        "enablingConditions": [
+          {
+            "paramName": "overrideGeo",
+            "paramValue": true,
+            "type": "EQUALS"
+          }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "geoRegion",
+        "displayName": "Region",
+        "simpleValueType": true,
+        "enablingConditions": [
+          {
+            "paramName": "overrideGeo",
+            "paramValue": true,
+            "type": "EQUALS"
+          }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "geoCity",
+        "displayName": "City",
+        "simpleValueType": true,
+        "enablingConditions": [
+          {
+            "paramName": "overrideGeo",
+            "paramValue": true,
+            "type": "EQUALS"
+          }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "geoPostalCode",
+        "displayName": "Postal Code",
+        "simpleValueType": true,
+        "enablingConditions": [
+          {
+            "paramName": "overrideGeo",
+            "paramValue": true,
+            "type": "EQUALS"
+          }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "geoLat",
+        "displayName": "Latitude",
+        "simpleValueType": true,
+        "enablingConditions": [
+          {
+            "paramName": "overrideGeo",
+            "paramValue": true,
+            "type": "EQUALS"
+          }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "geoLong",
+        "displayName": "Longitude",
+        "simpleValueType": true,
+        "enablingConditions": [
+          {
+            "paramName": "overrideGeo",
+            "paramValue": true,
+            "type": "EQUALS"
+          }
+        ]
+      }
+    ],
+    "help": "Needed for more accurate identity resolution. Will try to map these values ourselves when none are given"
   }
 ]
 
@@ -353,8 +448,6 @@ function getAndUpdateGtmBgParamCookies() {
 function mapCustomEventData(eventName, allEventData, data){
   let customEventData = {};
   
-  log("allEventData: ", allEventData);
-
   // We can assume its probably an event related to checkout
   if (allEventData.value || allEventData.transaction_id){
     if (allEventData.price) customEventData.value = allEventData.price;
@@ -399,7 +492,6 @@ function mapCustomEventData(eventName, allEventData, data){
     }
   }
   
-  
   // Used for de-duplication and is send as event data
   if (allEventData.event_id) customEventData.event_id = allEventData.event_id;
   
@@ -420,6 +512,45 @@ const eventName = mapEventName(data.useUserDefinedEventMapping, data.userDefined
 
 // Grab all the event data we need
 const eventData = mapCustomEventData(eventName, allEvents, data);
+
+
+// Decide where geo values come from. When data.overrideGeo is on AND the user
+// has filled in at least one of the data.geo* fields, use ONLY the user-provided
+// values (no mixing with allEvents.event_location, since they may refer to a
+// different location). Otherwise, fall back to the incoming event_location.
+function getGeoData(allEvents, data) {
+  const hasManualOverride =
+    isPresent(data.geoCountry)    ||
+    isPresent(data.geoRegion)     ||
+    isPresent(data.geoCity)       ||
+    isPresent(data.geoPostalCode) ||
+    isPresent(data.geoLat)        ||
+    isPresent(data.geoLong);
+
+  if (data.overrideGeo === true && hasManualOverride) {
+    return {
+      country:    data.geoCountry    || '',
+      region:     data.geoRegion     || '',
+      city:       data.geoCity       || '',
+      postalCode: data.geoPostalCode || '',
+      lat:        data.geoLat        || '',
+      lng:        data.geoLong       || ''
+    };
+  }
+
+  const evtLoc = allEvents.event_location || {};
+  return {
+    country:    evtLoc.country     || '',
+    region:     evtLoc.region      || '',
+    city:       evtLoc.city        || '',
+    postalCode: evtLoc.postal_code || '',
+    lat:        evtLoc.latitude    || '',
+    lng:        evtLoc.longitude   || ''
+  };
+}
+
+// Retrieve geo data relevant for pixel hit
+const geo = getGeoData(allEvents, data);
 
 if (data.isDebug){
   log('eventName', eventName);
@@ -468,11 +599,19 @@ const trackingData = {
   bg_campaign:  adParams.bg_campaign || '',
   bg_aid_k:     adParams.bg_aid_k || '',
   
+  // Geo
+  cn_override:  geo.country,    // Country (abbreviated, e.g. NL)
+  rg_override:  geo.region,     // Region (abbreviated, e.g. NH)
+  ct_override:  geo.city,       // City (if available)
+  pc_override:  geo.postalCode, // Postal / ZIP code
+  lat_override: geo.lat,        // Latitude
+  lng_override: geo.lng,        // Longitude
+
   // Longest params that are more error prone
   dl:         allEvents.page_location || getRequestHeader('origin'),   // Document location
   rl:         allEvents.page_referrer || getRequestHeader('referer'),  // Referrer location
   ua:         allEvents.user_agent || 'unknown',                       // User agent
-  
+
   // Live debugger
   debug:      isGtmDebugSession                // Send events to live debugger
 };
@@ -940,6 +1079,88 @@ scenarios:
     // Lets check that all the event data is parsed correctly
     assertThat(ed.value).isEqualTo(mockPurchaseEventData.value);
     assertThat(ed.transaction_id).isEqualTo(mockPurchaseEventData.transaction_id);
+- name: geo_default_test
+  code: |
+    // No overrideGeo flag -> all geo fields should come from event_location
+    mockPageviewData.event_location = {
+      country: 'NL',
+      region: 'NH',
+      city: 'Amsterdam',
+      postal_code: '1011',
+      latitude: 52.37,
+      longitude: 4.89
+    };
+
+    // Call runCode to run the template's code.
+    mock('getAllEventData', mockPageviewData);
+
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+
+    // Cross reference elements used in the url that is send out
+    const trackingData = output.trackingData;
+    assertThat(trackingData.cn_override).isEqualTo('NL');
+    assertThat(trackingData.rg_override).isEqualTo('NH');
+    assertThat(trackingData.ct_override).isEqualTo('Amsterdam');
+    assertThat(trackingData.pc_override).isEqualTo('1011');
+    assertThat(trackingData.lat_override).isEqualTo(52.37);
+    assertThat(trackingData.lng_override).isEqualTo(4.89);
+- name: geo_override_flag_off_ignores_values
+  code: |2
+
+    // overrideGeo=false but data.geo* set -> user values ignored, event_location wins
+    mockPageviewData.event_location = {
+      country: 'NL',
+      region: 'NH'
+    };
+
+    // Set GEO values even though we don't want to use them
+    mockInputData.overrideGeo    = false;
+    mockInputData.geoCountry     = 'US';
+    mockInputData.geoCity        = 'San Francisco';
+    mockInputData.geoPostalCode  = '94103';
+    mock('getAllEventData', mockPageviewData);
+
+
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+
+    // Make sure non of the set geo* variables are used as overrideGeo was set to false
+    const trackingData = output.trackingData;
+    assertThat(trackingData.cn_override).isEqualTo('NL');
+    assertThat(trackingData.rg_override).isEqualTo('NH');
+    assertThat(trackingData.ct_override).isEqualTo('');
+    assertThat(trackingData.pc_override).isEqualTo('');
+- name: geo_override_partial_no_mixing
+  code: |-
+    // overrideGeo=true with only one field set -> the rest are empty, NOT pulled
+    // from event_location. The whole point: don't mix two different locations.
+    mockPageviewData.event_location = {
+      country: 'NL',
+      region: 'NH',
+      city: 'Amsterdam',
+      postal_code: '1011',
+      latitude: 52.37,
+      longitude: 4.89
+    };
+
+
+    // We want to override the geo data and only country is set, meaning other geo vars should be cleared
+    mockInputData.overrideGeo = true;
+    mockInputData.geoCountry  = 'US';
+    mock('getAllEventData', mockPageviewData);
+
+    // Call runCode to run the template's code.
+    const output = runCode(mockInputData);
+
+    // Make sure only overwritten variable is set and rest are empty
+    const trackingData = output.trackingData;
+    assertThat(trackingData.cn_override).isEqualTo('US');
+    assertThat(trackingData.rg_override).isEqualTo('');
+    assertThat(trackingData.ct_override).isEqualTo('');
+    assertThat(trackingData.pc_override).isEqualTo('');
+    assertThat(trackingData.lat_override).isEqualTo('');
+    assertThat(trackingData.lng_override).isEqualTo('');
 setup: "// Docs: https://www.simoahava.com/analytics/writing-tests-for-custom-templates-google-tag-manager/\n\
   const log = require('logToConsole');\nconst JSON = require('JSON');\n\nlet mockInputData\
   \ = {\n  // Main data\n  \"trackingID\": \"ID-XX-XXXX\",  \n  \"useUserDefinedEventMapping\"\

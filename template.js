@@ -307,8 +307,8 @@ function getGeoData(allEvents, data) {
   };
 }
 
+// Retrieve geo data relevant for pixel hit
 const geo = getGeoData(allEvents, data);
-
 
 if (data.isDebug){
   log('eventName', eventName);
