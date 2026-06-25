@@ -1,6 +1,10 @@
 homepage: "https://www.billygrace.com"
 documentation: "https://help.billygrace.com/en/"
 versions:
+  - sha: 87470d68617eb10eacc2adfdeea42182825cf0aa
+    changeNotes: |2
+      * Added support for geo overrides
+      * Added a few test
   - sha: 6ea040b0b421f0e062215707c765b1ab551ff654
     changeNotes: |2
       * Any event can now include event data containing: value, transaction_id or currency
