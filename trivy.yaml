@@ -1,0 +1,12 @@
+# Trivy configuration for license compliance scanning.
+# See Billy-Grace/bg_shared/examples/trivy.yaml for documentation.
+
+license:
+  full: false
+
+  forbidden:
+    - AGPL-3.0
+    - GPL-2.0
+    - GPL-3.0
+
+  ignored: []

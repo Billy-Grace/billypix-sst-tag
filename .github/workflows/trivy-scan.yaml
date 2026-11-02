@@ -1,0 +1,19 @@
+name: Trivy Scan
+
+# pull requests into main: trivy vulnerability and license scans of the dependencies, non-blocking (results land in
+# the job summary)
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  vulnerability-scan:
+    uses: Billy-Grace/bg_shared/.github/workflows/reusable-trivy-vulnerability-scan.yaml@v1.14.0
+
+  license-scan:
+    uses: Billy-Grace/bg_shared/.github/workflows/reusable-trivy-license-scan.yaml@v1.14.0
